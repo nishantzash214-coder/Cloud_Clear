@@ -1,0 +1,81 @@
+{
+  "scene": "optical",
+  "outputs": {
+    "reconstructed": "temp_infer_test\\outputs\\optical_reconstructed.tif",
+    "cloud_mask": "temp_infer_test\\outputs\\optical_cloud_mask.tif",
+    "confidence": "temp_infer_test\\outputs\\optical_confidence.tif",
+    "uncertainty": "temp_infer_test\\outputs\\optical_uncertainty.tif",
+    "ndvi": "temp_infer_test\\outputs\\optical_ndvi.tif",
+    "ndwi": "temp_infer_test\\outputs\\optical_ndwi.tif",
+    "savi": "temp_infer_test\\outputs\\optical_savi.tif",
+    "ndbi": "temp_infer_test\\outputs\\optical_ndbi.tif"
+  },
+  "confidence_breakdown": {
+    "temporal": 1.0,
+    "spectral": NaN,
+    "sar": 1.0,
+    "artifact": NaN,
+    "boundary": 0.9536702036857605
+  },
+  "overall_pass": false,
+  "confidence": NaN,
+  "passes": [
+    {
+      "id": 1,
+      "name": "Temporal Validation",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.8,
+      "details": {
+        "temporal_consistency": 1.0
+      }
+    },
+    {
+      "id": 2,
+      "name": "SAR Consistency",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.7,
+      "details": {
+        "note": "No SAR data \u2014 pass skipped"
+      }
+    },
+    {
+      "id": 3,
+      "name": "Spectral Validation",
+      "passed": false,
+      "score": NaN,
+      "threshold": 0.95,
+      "details": {
+        "ndvi": NaN,
+        "ndwi": NaN,
+        "savi": NaN,
+        "ndbi": NaN
+      }
+    },
+    {
+      "id": 4,
+      "name": "AI Self-Checker",
+      "passed": false,
+      "score": NaN,
+      "threshold": 0.85,
+      "details": {
+        "artifact_probability": NaN
+      }
+    },
+    {
+      "id": 5,
+      "name": "Reference Matching",
+      "passed": false,
+      "score": NaN,
+      "threshold": 0.7,
+      "details": {
+        "mae_vs_reference": NaN,
+        "ssim_vs_reference": NaN
+      }
+    }
+  ],
+  "ssim": NaN,
+  "psnr": NaN,
+  "sam": NaN
+}

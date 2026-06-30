@@ -1,0 +1,274 @@
+# ============================================================
+#  deploy/kubernetes/manifests.yaml
+#  Kubernetes deployment for Cloud Removal API
+#  Deploy to EKS or any K8s cluster with GPU node pool
+# ============================================================
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloud-removal
+  labels:
+    app: cloud-removal
+
+---
+# ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-removal-config
+  namespace: cloud-removal
+data:
+  CONFIG_PATH:    "/app/configs/base.yaml"
+  LOG_LEVEL:      "INFO"
+  AWS_REGION:     "ap-south-1"
+  WORKERS:        "1"
+
+---
+# Secret (set via: kubectl create secret generic cloud-removal-secrets ...)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloud-removal-secrets
+  namespace: cloud-removal
+type: Opaque
+stringData:
+  DATABASE_URL:   "postgresql://cr_user:CHANGEME@rds-endpoint:5432/cloud_removal"
+  S3_DATA_BUCKET: "cloud-removal-data-SUFFIX"
+  WANDB_API_KEY:  "CHANGEME"
+
+---
+# API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloud-removal-api
+  namespace: cloud-removal
+  labels:
+    app:  cloud-removal
+    tier: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app:  cloud-removal
+      tier: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge:       1
+  template:
+    metadata:
+      labels:
+        app:  cloud-removal
+        tier: api
+    spec:
+      # Request GPU node
+      nodeSelector:
+        accelerator: nvidia-t4
+      tolerations:
+        - key:      nvidia.com/gpu
+          operator: Exists
+          effect:   NoSchedule
+
+      containers:
+        - name:  api
+          image: AWS_ACCOUNT.dkr.ecr.ap-south-1.amazonaws.com/cloud-removal/api:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8000
+              name: http
+
+          envFrom:
+            - configMapRef:
+                name: cloud-removal-config
+            - secretRef:
+                name: cloud-removal-secrets
+
+          env:
+            - name:  CUDA_VISIBLE_DEVICES
+              value: "0"
+
+          resources:
+            requests:
+              memory:          "8Gi"
+              cpu:             "2"
+              nvidia.com/gpu:  "1"
+            limits:
+              memory:          "15Gi"
+              cpu:             "4"
+              nvidia.com/gpu:  "1"
+
+          volumeMounts:
+            - name:      data
+              mountPath: /app/data
+            - name:      outputs
+              mountPath: /app/outputs
+            - name:      configs
+              mountPath: /app/configs
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 90
+            periodSeconds:       30
+            failureThreshold:    3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds:       15
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: cloud-removal-data-pvc
+        - name: outputs
+          persistentVolumeClaim:
+            claimName: cloud-removal-outputs-pvc
+        - name: configs
+          configMap:
+            name: cloud-removal-config
+
+      terminationGracePeriodSeconds: 60
+
+---
+# PersistentVolumeClaims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cloud-removal-data-pvc
+  namespace: cloud-removal
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 200Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cloud-removal-outputs-pvc
+  namespace: cloud-removal
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-removal-api-svc
+  namespace: cloud-removal
+  labels:
+    app:  cloud-removal
+    tier: api
+spec:
+  type:     ClusterIP
+  selector:
+    app:  cloud-removal
+    tier: api
+  ports:
+    - port:       80
+      targetPort: 8000
+      name:       http
+
+---
+# Horizontal Pod Autoscaler (CPU-based — GPU jobs queue internally)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cloud-removal-hpa
+  namespace: cloud-removal
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       cloud-removal-api
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: 70
+
+---
+# Ingress (nginx-ingress or ALB ingress controller)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloud-removal-ingress
+  namespace: cloud-removal
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size:         "2048m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout:      "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout:      "600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout:   "60"
+    cert-manager.io/cluster-issuer:                      "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:       [api.cloudclear.in]
+      secretName:  cloud-removal-tls
+  rules:
+    - host: api.cloudclear.in
+      http:
+        paths:
+          - path:     /
+            pathType: Prefix
+            backend:
+              service:
+                name: cloud-removal-api-svc
+                port:
+                  number: 80
+
+---
+# CronJob: nightly model checkpoint sync to S3
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: checkpoint-sync
+  namespace: cloud-removal
+spec:
+  schedule: "0 2 * * *"   # 2 AM daily
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: sync
+              image: amazon/aws-cli:latest
+              envFrom:
+                - secretRef:
+                    name: cloud-removal-secrets
+              command:
+                - sh
+                - -c
+                - |
+                  aws s3 sync /app/outputs/checkpoints/ \
+                    s3://$S3_DATA_BUCKET/checkpoints/ --quiet
+                  echo "Checkpoint sync complete"
+              volumeMounts:
+                - name:      outputs
+                  mountPath: /app/outputs
+          volumes:
+            - name: outputs
+              persistentVolumeClaim:
+                claimName: cloud-removal-outputs-pvc

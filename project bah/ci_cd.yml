@@ -1,0 +1,231 @@
+# ============================================================
+#  .github/workflows/ci_cd.yml
+#  CI/CD pipeline for Cloud Removal Framework
+#
+#  Triggers:
+#    push → main      → full build + deploy to production
+#    push → develop   → test + build only
+#    pull_request      → test only
+#
+#  Stages:
+#    1. test           pytest unit + integration
+#    2. build          Docker image → ECR
+#    3. deploy-ec2     rolling restart on GPU instance
+#    4. deploy-k8s     kubectl rollout (if EKS configured)
+#    5. notify         Slack / email on failure
+# ============================================================
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION:   ap-south-1
+  ECR_REPO:     cloud-removal/api
+  IMAGE_TAG:    ${{ github.sha }}
+
+jobs:
+  # ── 1. Tests ────────────────────────────────────────────────
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install -e . --no-deps
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short --cov=src --cov-report=xml
+
+      - name: Run integration tests (CPU mode)
+        run: pytest tests/integration/ -v --tb=short -x
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+  # ── 2. Build & push Docker image ────────────────────────────
+  build:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push inference image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file:    Dockerfile
+          target:  inference
+          push:    true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Output image URI
+        run: |
+          echo "IMAGE=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}" \
+            >> $GITHUB_STEP_SUMMARY
+
+  # ── 3. Deploy to EC2 (production) ───────────────────────────
+  deploy-ec2:
+    name: Deploy → EC2
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy via SSM (no SSH key needed)
+        run: |
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}"
+          INSTANCE_ID="${{ secrets.EC2_INSTANCE_ID }}"
+
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              \"aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}\",
+              \"docker pull $IMAGE\",
+              \"docker stop cloudclear-api || true\",
+              \"docker rm   cloudclear-api || true\",
+              \"docker run -d --name cloudclear-api --gpus all --restart unless-stopped -p 8000:8000 --env-file /app/.env -v /app/data:/app/data -v /app/outputs:/app/outputs -v /app/configs:/app/configs $IMAGE\",
+              \"echo Deploy complete\"
+            ]" \
+            --output text
+
+      - name: Health check
+        run: |
+          sleep 60
+          curl -f "http://${{ secrets.EC2_PUBLIC_IP }}:8000/health" \
+            || (echo "Health check failed" && exit 1)
+
+      - name: Post deployment summary
+        run: |
+          echo "### ✅ Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: \`${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- API: http://${{ secrets.EC2_PUBLIC_IP }}:8000" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+
+  # ── 4. Deploy to Kubernetes (optional EKS) ──────────────────
+  deploy-k8s:
+    name: Deploy → EKS
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && vars.USE_EKS == 'true'
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ secrets.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Update image in manifest
+        run: |
+          IMAGE="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}"
+          sed -i "s|AWS_ACCOUNT.dkr.ecr.ap-south-1.amazonaws.com/cloud-removal/api:latest|$IMAGE|g" \
+            deploy/kubernetes/manifests.yaml
+
+      - name: Apply manifests
+        run: kubectl apply -f deploy/kubernetes/manifests.yaml
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/cloud-removal-api \
+            -n cloud-removal --timeout=300s
+
+  # ── 5. Notify on failure ─────────────────────────────────────
+  notify:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [test, build, deploy-ec2]
+    if: failure()
+
+    steps:
+      - name: Send Slack notification
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "❌ CloudClear CI/CD failed on `${{ github.ref_name }}`",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*CloudClear deployment failed*\nBranch: `${{ github.ref_name }}`\nCommit: `${{ github.sha }}`\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+                }
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL:  ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

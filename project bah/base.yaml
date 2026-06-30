@@ -1,0 +1,199 @@
+# ============================================================
+#  Cloud Removal Framework — Base Configuration
+#  Copy to configs/my_experiment.yaml and override as needed
+# ============================================================
+
+project:
+  name: "cloud_removal_v1"
+  description: "Scientific cloud removal for LISS-IV / Resourcesat imagery"
+  seed: 42
+
+# ─────────────────────────────────────────────
+# Paths
+# ─────────────────────────────────────────────
+paths:
+  data_root:       "data"
+  raw_optical:     "data/raw/optical"
+  raw_sar:         "data/raw/sar"
+  raw_temporal:    "data/raw/temporal"
+  archive:         "data/archive"
+  processed:       "data/processed"
+  checkpoints:     "outputs/checkpoints"
+  logs:            "outputs/logs"
+  predictions:     "outputs/predictions"
+  reports:         "outputs/reports"
+
+# ─────────────────────────────────────────────
+# Data
+# ─────────────────────────────────────────────
+data:
+  patch_size: 256                  # Training patch size (pixels)
+  overlap: 32                      # Overlap for inference tiling
+  temporal_window_days: 15         # ± days for temporal context
+  bands:
+    optical: ["green", "red", "nir", "swir"]
+    sar:     ["VV", "VH"]
+  normalization: "percentile"      # options: minmax | percentile | standard
+  percentile_clip: [2, 98]
+  split:
+    train: 0.70
+    val:   0.15
+    test:  0.15
+  augmentation:
+    horizontal_flip: true
+    vertical_flip:   true
+    rotation_90:     true
+    spectral_jitter: 0.05          # ± fraction of per-band noise
+    seasonal_sim:    true          # synthetic seasonal spectral shift
+
+# ─────────────────────────────────────────────
+# Cloud Detection  (Layer 2)
+# ─────────────────────────────────────────────
+cloud_detection:
+  model: "unetplusplus"            # options: unetplusplus | deeplabv3plus
+  encoder: "resnet50"
+  encoder_weights: "imagenet"
+  in_channels: 4                   # green, red, nir, swir
+  num_classes: 4                   # clear, thin_cloud, thick_cloud, shadow
+  input_size: 256
+  dropout: 0.2
+  training:
+    epochs: 60
+    batch_size: 16
+    lr: 1.0e-4
+    lr_scheduler: "cosine"
+    warmup_epochs: 5
+    optimizer: "adamw"
+    weight_decay: 1.0e-4
+    class_weights: [0.5, 1.5, 2.0, 1.8]   # clear, thin, thick, shadow
+    loss: "dice_ce"                          # dice + cross-entropy combined
+
+# ─────────────────────────────────────────────
+# Temporal Analysis Engine  (Layer 3)
+# ─────────────────────────────────────────────
+temporal:
+  composite_method: "median"       # options: median | mean | mosaic
+  trend_indices: ["ndvi", "ndwi"]
+  change_threshold: 0.15           # NDVI delta triggering change flag
+  consistency_weight: 0.3          # weight of temporal score in reconstruction loss
+
+# ─────────────────────────────────────────────
+# Reconstruction Engine  (Layer 4)
+# ─────────────────────────────────────────────
+reconstruction:
+  # Cross-attention fusion
+  fusion:
+    d_model: 256
+    num_heads: 8
+    num_layers: 4
+    dropout: 0.1
+    adaptive_weighting: true       # branch weights shift per cloud density
+
+  # Branch 1 — Conditional Diffusion
+  diffusion:
+    enabled: true
+    timesteps: 1000
+    beta_schedule: "cosine"
+    unet_channels: [128, 256, 512, 1024]
+    attention_resolutions: [16, 8]
+    conditioning: ["temporal_stack", "sar_features", "cloud_mask"]
+
+  # Branch 2 — Conditional GAN (Pix2PixHD)
+  gan:
+    enabled: true
+    generator: "pix2pixhd"
+    discriminators: 3              # multi-scale PatchGAN
+    ngf: 64
+    ndf: 64
+
+  # Branch 3 — Temporal Transformer
+  temporal_transformer:
+    enabled: true
+    backbone: "vit_base_patch16"
+    temporal_depth: 4
+    spatial_depth: 4
+    embed_dim: 512
+    num_heads: 8
+    max_sequence_len: 30           # max temporal observations
+
+  # Branch 4 — SAR Fusion Encoder
+  sar_encoder:
+    enabled: true
+    backbone: "resnet34"
+    in_channels: 2                 # VV, VH
+    out_channels: 256
+
+  training:
+    epochs: 100
+    batch_size: 8
+    lr: 2.0e-4
+    lr_scheduler: "cosine_restart"
+    warmup_epochs: 10
+    optimizer: "adamw"
+    weight_decay: 1.0e-4
+    gradient_clip: 1.0
+
+# ─────────────────────────────────────────────
+# Loss Functions
+# ─────────────────────────────────────────────
+losses:
+  pixel_l1:              1.0
+  perceptual:            0.5
+  spectral_consistency:  2.0       # enforce NDVI/NDWI/SAVI/NDBI ranges
+  physical_consistency:  1.5       # surface reflectance priors
+  temporal_consistency:  1.0       # ±15 day penalty
+  adversarial:           0.1       # GAN branch only
+
+# ─────────────────────────────────────────────
+# Verification Engine  (Layer 5)
+# ─────────────────────────────────────────────
+verification:
+  spectral_error_threshold: 0.05   # 5% max index error
+  sar_consistency_min: 0.70        # minimum structural similarity vs SAR
+  temporal_consistency_min: 0.80   # min temporal consistency score
+  ai_checker:
+    model: "resnet18"              # lightweight secondary anomaly detector
+    artifact_threshold: 0.15
+
+# ─────────────────────────────────────────────
+# Confidence & Uncertainty  (Layer 6)
+# ─────────────────────────────────────────────
+confidence:
+  mc_dropout_passes: 20            # Monte Carlo dropout for uncertainty
+  high_confidence_threshold: 0.80
+  low_confidence_threshold: 0.50
+
+# ─────────────────────────────────────────────
+# Validation Metrics
+# ─────────────────────────────────────────────
+validation:
+  metrics: ["ssim", "psnr", "rmse", "ndvi_error", "ndwi_error", "sam", "temporal_consistency"]
+  targets:
+    ssim:                 0.90
+    psnr:                 35.0
+    rmse:                 0.03
+    ndvi_error:           0.05
+    ndwi_error:           0.05
+    sam:                  0.10
+    temporal_consistency: 0.85
+
+# ─────────────────────────────────────────────
+# Infrastructure
+# ─────────────────────────────────────────────
+hardware:
+  gpus: 1
+  precision: "16-mixed"           # bf16 on A100, 16-mixed on V100/RTX
+  num_workers: 8
+  pin_memory: true
+
+logging:
+  logger: "wandb"                  # options: wandb | tensorboard | csv
+  log_every_n_steps: 50
+  save_top_k: 3
+  monitor: "val/ssim"
+  mode: "max"
+
+export:
+  formats: ["geotiff", "cog"]      # COG = Cloud-Optimized GeoTIFF
+  crs: "EPSG:32643"                # UTM Zone 43N (central India default)
+  nodata: -9999

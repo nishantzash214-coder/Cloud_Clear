@@ -1,0 +1,77 @@
+{
+  "scene": "9c9f8d10",
+  "outputs": {
+    "reconstructed": "outputs\\predictions\\9c9f8d10\\9c9f8d10_reconstructed.tif",
+    "cloud_mask": "outputs\\predictions\\9c9f8d10\\9c9f8d10_cloud_mask.tif",
+    "confidence": "outputs\\predictions\\9c9f8d10\\9c9f8d10_confidence.tif",
+    "uncertainty": "outputs\\predictions\\9c9f8d10\\9c9f8d10_uncertainty.tif",
+    "ndvi": "outputs\\predictions\\9c9f8d10\\9c9f8d10_ndvi.tif",
+    "ndwi": "outputs\\predictions\\9c9f8d10\\9c9f8d10_ndwi.tif",
+    "savi": "outputs\\predictions\\9c9f8d10\\9c9f8d10_savi.tif",
+    "ndbi": "outputs\\predictions\\9c9f8d10\\9c9f8d10_ndbi.tif"
+  },
+  "confidence_breakdown": {
+    "temporal": 1.0,
+    "spectral": 1.0,
+    "sar": 1.0,
+    "artifact": 0.5274463295936584,
+    "boundary": 0.9536702036857605
+  },
+  "overall_pass": false,
+  "confidence": 0.9054892897605896,
+  "passes": [
+    {
+      "id": 1,
+      "name": "Temporal Validation",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.8,
+      "details": {
+        "note": "No temporal data \u2014 pass skipped"
+      }
+    },
+    {
+      "id": 2,
+      "name": "SAR Consistency",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.7,
+      "details": {
+        "note": "No SAR data \u2014 pass skipped"
+      }
+    },
+    {
+      "id": 3,
+      "name": "Spectral Validation",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.95,
+      "details": {
+        "out_of_range_fraction": 0.0
+      }
+    },
+    {
+      "id": 4,
+      "name": "AI Self-Checker",
+      "passed": false,
+      "score": 0.527446448802948,
+      "threshold": 0.85,
+      "details": {
+        "artifact_probability": 0.472553551197052
+      }
+    },
+    {
+      "id": 5,
+      "name": "Reference Matching",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.7,
+      "details": {
+        "note": "No reference data \u2014 pass skipped"
+      }
+    }
+  ],
+  "ssim": 0.8922546729445457,
+  "psnr": 9.67601556230232,
+  "sam": 0.7106419801712036
+}

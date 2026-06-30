@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CloudClear — Scientific Cloud Removal</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet"/>
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+<style>
+/* ── Design tokens ─────────────────────────────────────────────
+   Palette: deep space navy + signal green + cloud white + amber alert
+   Typography: monospace data + clean sans UI — remote sensing terminal feel
+   Signature: animated satellite orbit trace on the hero header
+───────────────────────────────────────────────────────────────── */
+:root{
+  --navy:   #0B0F1A;
+  --navy2:  #111827;
+  --navy3:  #1C2333;
+  --navy4:  #243044;
+  --green:  #00D97E;
+  --green2: #00A85F;
+  --amber:  #F59E0B;
+  --red:    #EF4444;
+  --white:  #F0F4FF;
+  --muted:  #8B9BB4;
+  --border: #2A3550;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  --font-ui:   'Inter', 'Segoe UI', system-ui, sans-serif;
+  --radius: 6px;
+  --panel: #151C2E;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--navy);color:var(--white);font-family:var(--font-ui);
+     overflow:hidden;height:100vh;display:flex;flex-direction:column}
+
+/* ── Top bar ─────────────────────────────────────────── */
+#topbar{
+  height:52px;display:flex;align-items:center;gap:16px;
+  padding:0 20px;border-bottom:1px solid var(--border);
+  background:var(--navy2);flex-shrink:0;z-index:10;
+}
+#logo{
+  display:flex;align-items:center;gap:8px;font-family:var(--font-mono);
+  font-size:15px;font-weight:600;letter-spacing:.04em;
+}
+#logo svg{flex-shrink:0}
+#logo .cc{color:var(--green)}
+#logo .sep{color:var(--border);margin:0 4px}
+#logo .sub{color:var(--muted);font-weight:400;font-size:12px}
+.spacer{flex:1}
+#status-dot{
+  width:7px;height:7px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 6px var(--green);animation:pulse 2s infinite;
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+#status-label{font-size:12px;color:var(--muted);font-family:var(--font-mono)}
+#coords-display{font-family:var(--font-mono);font-size:11px;color:var(--muted);
+                padding:4px 10px;border:1px solid var(--border);border-radius:var(--radius)}
+
+/* ── Main layout ─────────────────────────────────────── */
+#main{display:flex;flex:1;overflow:hidden}
+
+/* ── Left panel ──────────────────────────────────────── */
+#left-panel{
+  width:340px;flex-shrink:0;background:var(--panel);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.panel-section{
+  padding:16px;border-bottom:1px solid var(--border);
+}
+.panel-section:last-child{border-bottom:none;flex:1;overflow-y:auto}
+.section-label{
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.1em;
+  color:var(--green);text-transform:uppercase;margin-bottom:12px;
+  display:flex;align-items:center;gap:6px;
+}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* Upload zone */
+#upload-zone{
+  border:1.5px dashed var(--border);border-radius:var(--radius);
+  padding:24px 16px;text-align:center;cursor:pointer;
+  transition:border-color .2s,background .2s;
+  background:transparent;
+}
+#upload-zone:hover,#upload-zone.drag{
+  border-color:var(--green);background:rgba(0,217,126,.05);
+}
+#upload-zone svg{color:var(--muted);margin-bottom:8px}
+#upload-zone .uz-title{font-size:13px;font-weight:500;margin-bottom:4px}
+#upload-zone .uz-sub{font-size:11px;color:var(--muted)}
+#upload-zone input{display:none}
+
+/* File slots */
+.file-slot{
+  display:flex;align-items:center;gap:10px;padding:8px 10px;
+  border:1px solid var(--border);border-radius:var(--radius);
+  margin-bottom:6px;font-size:12px;background:var(--navy3);
+}
+.file-slot .fs-icon{font-size:16px;flex-shrink:0}
+.file-slot .fs-info{flex:1;min-width:0}
+.file-slot .fs-name{font-family:var(--font-mono);font-size:11px;
+                    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-slot .fs-type{font-size:10px;color:var(--muted)}
+.file-slot .fs-status{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.fs-status.ok{background:var(--green)}
+.fs-status.missing{background:var(--border)}
+
+/* AOI selector */
+.input-row{margin-bottom:10px}
+.input-label{font-size:11px;color:var(--muted);margin-bottom:4px;display:block}
+.input-field{
+  width:100%;background:var(--navy3);border:1px solid var(--border);
+  border-radius:var(--radius);padding:7px 10px;color:var(--white);
+  font-family:var(--font-mono);font-size:12px;outline:none;
+  transition:border-color .2s;
+}
+.input-field:focus{border-color:var(--green)}
+.preset-row{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.preset-btn{
+  background:var(--navy3);border:1px solid var(--border);border-radius:4px;
+  color:var(--muted);font-size:10px;padding:3px 8px;cursor:pointer;
+  font-family:var(--font-mono);transition:all .15s;
+}
+.preset-btn:hover{border-color:var(--green);color:var(--green)}
+
+/* Run button */
+#run-btn{
+  width:100%;padding:11px;background:var(--green2);color:#000;
+  border:none;border-radius:var(--radius);font-size:13px;font-weight:600;
+  cursor:pointer;transition:background .2s,opacity .2s;
+  font-family:var(--font-ui);display:flex;align-items:center;
+  justify-content:center;gap:8px;
+}
+#run-btn:hover:not(:disabled){background:var(--green)}
+#run-btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* Progress */
+#progress-section{display:none}
+#progress-section.visible{display:block}
+.stage-row{
+  display:flex;align-items:center;gap:10px;padding:6px 0;
+  font-size:12px;font-family:var(--font-mono);
+}
+.stage-dot{
+  width:8px;height:8px;border-radius:50%;flex-shrink:0;
+  background:var(--border);transition:background .3s;
+}
+.stage-dot.done{background:var(--green)}
+.stage-dot.active{background:var(--amber);animation:pulse 1s infinite}
+.stage-dot.fail{background:var(--red)}
+.stage-name{color:var(--muted);flex:1}
+.stage-name.active{color:var(--white)}
+.stage-name.done{color:var(--green)}
+.progress-bar-wrap{
+  background:var(--navy3);border-radius:2px;height:3px;
+  margin:10px 0;overflow:hidden;
+}
+.progress-bar-fill{
+  height:100%;background:var(--green);border-radius:2px;
+  transition:width .4s ease;
+}
+
+/* Results */
+.metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.metric-card{
+  background:var(--navy3);border:1px solid var(--border);
+  border-radius:var(--radius);padding:10px;
+}
+.metric-value{
+  font-family:var(--font-mono);font-size:18px;font-weight:600;
+  color:var(--green);line-height:1;margin-bottom:3px;
+}
+.metric-value.warn{color:var(--amber)}
+.metric-value.fail{color:var(--red)}
+.metric-label{font-size:10px;color:var(--muted);text-transform:uppercase;
+              letter-spacing:.06em}
+.pass-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;
+  font-family:var(--font-mono);margin-bottom:10px;
+}
+.pass-badge.pass{background:rgba(0,217,126,.15);color:var(--green);
+                  border:1px solid rgba(0,217,126,.3)}
+.pass-badge.fail{background:rgba(239,68,68,.15);color:var(--red);
+                  border:1px solid rgba(239,68,68,.3)}
+
+.download-row{display:flex;gap:6px;flex-wrap:wrap}
+.dl-btn{
+  padding:5px 10px;border-radius:var(--radius);font-size:11px;
+  font-family:var(--font-mono);cursor:pointer;transition:all .15s;
+  text-decoration:none;display:inline-flex;align-items:center;gap:5px;
+  border:1px solid var(--border);background:var(--navy3);color:var(--white);
+}
+.dl-btn:hover{border-color:var(--green);color:var(--green)}
+.download-empty{
+  width:100%;padding:12px 14px;margin-top:6px;
+  background:rgba(248,215,218,.16);border:1px solid rgba(239,68,68,.25);
+  color:var(--red);border-radius:var(--radius);font-size:12px;
+}
+
+/* Layer controls */
+.layer-row{
+  display:flex;align-items:center;gap:10px;padding:5px 0;
+  font-size:12px;cursor:pointer;
+}
+.layer-row input[type=checkbox]{accent-color:var(--green);width:14px;height:14px}
+.layer-row .lr-name{flex:1;color:var(--muted)}
+.layer-row:hover .lr-name{color:var(--white)}
+.opacity-slider{
+  width:80px;accent-color:var(--green);cursor:pointer;
+}
+
+/* ── Map container ───────────────────────────────────── */
+#map-wrap{flex:1;position:relative}
+#map{width:100%;height:100%}
+
+/* Map overlays */
+#map-legend{
+  position:absolute;bottom:28px;right:14px;
+  background:rgba(11,15,26,.9);border:1px solid var(--border);
+  border-radius:var(--radius);padding:12px;min-width:150px;
+  display:none;backdrop-filter:blur(8px);
+}
+#map-legend.visible{display:block}
+.legend-title{font-size:10px;color:var(--green);font-family:var(--font-mono);
+              text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+.legend-bar{
+  height:12px;border-radius:2px;margin-bottom:5px;
+  background:linear-gradient(to right,#CC0000,#FF8800,#00AA00);
+}
+.legend-ticks{display:flex;justify-content:space-between;
+              font-size:9px;color:var(--muted);font-family:var(--font-mono)}
+
+#scene-info{
+  position:absolute;top:14px;left:14px;
+  background:rgba(11,15,26,.88);border:1px solid var(--border);
+  border-radius:var(--radius);padding:10px 14px;font-size:11px;
+  font-family:var(--font-mono);display:none;backdrop-filter:blur(8px);
+}
+#scene-info.visible{display:block}
+.si-row{display:flex;gap:12px;align-items:center}
+.si-key{color:var(--muted)}
+.si-val{color:var(--white)}
+
+/* Notification toast */
+#toast{
+  position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(60px);
+  background:var(--navy2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:10px 18px;font-size:12px;font-family:var(--font-mono);
+  transition:transform .25s ease;z-index:100;white-space:nowrap;
+  box-shadow:0 4px 24px rgba(0,0,0,.4);
+}
+#toast.show{transform:translateX(-50%) translateY(0)}
+#toast.ok{border-color:var(--green);color:var(--green)}
+#toast.err{border-color:var(--red);color:var(--red)}
+.error-banner{
+  display:none;
+  position:fixed;
+  top:54px;
+  left:50%;
+  transform:translateX(-50%);
+  width:calc(100% - 40px);
+  max-width:980px;
+  padding:10px 14px;
+  border-radius:var(--radius);
+  border:1px solid rgba(239,68,68,.3);
+  background:rgba(254,226,226,.95);
+  color:var(--red);
+  font-size:12px;
+  text-align:center;
+  z-index:150;
+}
+.error-banner.show{display:block;}
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ──────────────────────────────────────────── -->
+<div id="topbar">
+  <div id="logo">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+      <circle cx="11" cy="11" r="9" stroke="#00D97E" stroke-width="1.5"/>
+      <ellipse cx="11" cy="11" rx="9" ry="4" stroke="#00D97E" stroke-width="1"
+               stroke-dasharray="3 2" transform="rotate(-30 11 11)"/>
+      <circle cx="11" cy="4" r="2" fill="#00D97E"/>
+    </svg>
+    <span><span class="cc">CloudClear</span><span class="sep">|</span>
+    <span class="sub">Scientific Cloud Removal · LISS-IV / Resourcesat</span></span>
+  </div>
+  <div class="spacer"></div>
+  <div id="status-dot"></div>
+  <span id="status-label">API ONLINE</span>
+  <div id="coords-display">— , —</div>
+</div>
+<div id="error-banner" class="error-banner"></div>
+
+<!-- ── Main layout ──────────────────────────────────────── -->
+<div id="main">
+
+  <!-- ── Left panel ────────────────────────────────────── -->
+  <div id="left-panel">
+
+    <!-- Upload -->
+    <div class="panel-section">
+      <div class="section-label">Input Data</div>
+
+      <div id="upload-zone" onclick="document.getElementById('file-optical').click()"
+           ondragover="event.preventDefault();this.classList.add('drag')"
+           ondragleave="this.classList.remove('drag')"
+           ondrop="handleDrop(event)">
+        <input type="file" id="file-optical" accept=".tif,.tiff" onchange="handleFile(event,'optical')"/>
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.5" style="margin:0 auto 8px;display:block">
+          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <div class="uz-title">Drop GeoTIFF here</div>
+        <div class="uz-sub">4-band optical (G, R, NIR, SWIR)</div>
+      </div>
+
+      <div style="height:10px"></div>
+
+      <div class="file-slot">
+        <span class="fs-icon">🛰️</span>
+        <div class="fs-info">
+          <div class="fs-name" id="fn-optical">No file selected</div>
+          <div class="fs-type">Optical — G / R / NIR / SWIR</div>
+        </div>
+        <div class="fs-status" id="fs-optical"></div>
+      </div>
+      <div class="file-slot" onclick="document.getElementById('file-sar').click()"
+           style="cursor:pointer" title="Optional">
+        <input type="file" id="file-sar" accept=".tif,.tiff" style="display:none"
+               onchange="handleFile(event,'sar')"/>
+        <span class="fs-icon">📡</span>
+        <div class="fs-info">
+          <div class="fs-name" id="fn-sar">SAR — optional</div>
+          <div class="fs-type">Sentinel-1 / RISAT (VV, VH)</div>
+        </div>
+        <div class="fs-status" id="fs-sar"></div>
+      </div>
+      <div class="file-slot" onclick="document.getElementById('file-temporal').click()"
+           style="cursor:pointer" title="Optional">
+        <input type="file" id="file-temporal" accept=".tif,.tiff" style="display:none"
+               onchange="handleFile(event,'temporal')"/>
+        <span class="fs-icon">📅</span>
+        <div class="fs-info">
+          <div class="fs-name" id="fn-temporal">Temporal stack — optional</div>
+          <div class="fs-type">±15-day multitemporal stack</div>
+        </div>
+        <div class="fs-status" id="fs-temporal"></div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-label">Backend API</div>
+      <div class="input-row">
+        <label class="input-label">API host</label>
+        <input class="input-field" id="api-host-input" type="text"
+               value="http://localhost:8000" placeholder="http://localhost:8000"/>
+      </div>
+      <div id="api-check-status" style="font-size:11px;color:var(--muted);margin:6px 0;">Checking API status...</div>
+      <div class="preset-row">
+        <button class="preset-btn" onclick="testApiHost()">Test API host</button>
+        <button class="preset-btn" onclick="useCurrentOrigin()">Use page origin</button>
+      </div>
+      <div class="input-row" style="margin-top:10px;">
+        <div style="font-size:11px;color:var(--green);line-height:1.4;">Tip: For local CPU testing use a small tile like <strong>test_scene_64.tif</strong> in <code>data/raw/optical</code>. Large scenes can exceed memory and fail.</div>
+      </div>
+      <div class="input-row">
+        <label class="input-label">Bounding Box (lon_min, lat_min, lon_max, lat_max)</label>
+        <input class="input-field" id="bbox-input" type="text"
+               value="77.2,23.1,77.6,23.5" placeholder="77.2,23.1,77.6,23.5"/>
+      </div>
+      <div class="input-row">
+        <label class="input-label">Target Date</label>
+        <input class="input-field" id="date-input" type="date" value="2024-08-15"/>
+      </div>
+      <div class="preset-row">
+        <button class="preset-btn" onclick="setPreset('77.2,23.1,77.6,23.5')">Bhopal</button>
+        <button class="preset-btn" onclick="setPreset('76.8,28.4,77.4,29.0')">Delhi</button>
+        <button class="preset-btn" onclick="setPreset('72.7,18.8,73.1,19.2')">Mumbai</button>
+        <button class="preset-btn" onclick="setPreset('79.9,12.8,80.4,13.3')">Chennai</button>
+        <button class="preset-btn" onclick="setPreset('90.5,25.5,92.5,26.5')">Assam</button>
+        <button class="preset-btn" onclick="setPreset('74.5,30.0,76.5,31.5')">Punjab</button>
+      </div>
+    </div>
+
+    <!-- Run -->
+    <div class="panel-section">
+      <button id="run-btn" onclick="runPipeline()" disabled>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        Run Cloud Removal Pipeline
+      </button>
+    </div>
+
+    <!-- Progress -->
+    <div class="panel-section" id="progress-section">
+      <div class="section-label">Pipeline Progress</div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+      <div id="stage-list">
+        <div class="stage-row" id="st-0"><div class="stage-dot" id="sd-0"></div><span class="stage-name" id="sn-0">L1 · Data loading</span></div>
+        <div class="stage-row" id="st-1"><div class="stage-dot" id="sd-1"></div><span class="stage-name" id="sn-1">L2 · Cloud detection</span></div>
+        <div class="stage-row" id="st-2"><div class="stage-dot" id="sd-2"></div><span class="stage-name" id="sn-2">L3 · Temporal analysis</span></div>
+        <div class="stage-row" id="st-3"><div class="stage-dot" id="sd-3"></div><span class="stage-name" id="sn-3">L4 · Reconstruction</span></div>
+        <div class="stage-row" id="st-4"><div class="stage-dot" id="sd-4"></div><span class="stage-name" id="sn-4">L5 · Verification</span></div>
+        <div class="stage-row" id="st-5"><div class="stage-dot" id="sd-5"></div><span class="stage-name" id="sn-5">L6 · Confidence maps</span></div>
+        <div class="stage-row" id="st-6"><div class="stage-dot" id="sd-6"></div><span class="stage-name" id="sn-6">L7 · Export outputs</span></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="panel-section" id="results-section" style="display:none">
+      <div class="section-label">Results</div>
+      <div id="overall-badge"></div>
+      <div class="metric-grid" id="metric-grid"></div>
+      <div id="pass-summary" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px"></div>
+
+      <div class="section-label" style="margin-top:8px">Layer Controls</div>
+      <div class="layer-row">
+        <input type="checkbox" id="lyr-cloud" checked onchange="toggleLayer('cloud',this.checked)"/>
+        <span class="lr-name">Cloud mask</span>
+        <input type="range" class="opacity-slider" min="0" max="100" value="70"
+               oninput="setLayerOpacity('cloud',this.value)"/>
+      </div>
+      <div class="layer-row">
+        <input type="checkbox" id="lyr-conf" checked onchange="toggleLayer('conf',this.checked)"/>
+        <span class="lr-name">Confidence map</span>
+        <input type="range" class="opacity-slider" min="0" max="100" value="70"
+               oninput="setLayerOpacity('conf',this.value)"/>
+      </div>
+      <div class="layer-row">
+        <input type="checkbox" id="lyr-ndvi" onchange="toggleLayer('ndvi',this.checked)"/>
+        <span class="lr-name">NDVI overlay</span>
+        <input type="range" class="opacity-slider" min="0" max="100" value="70"
+               oninput="setLayerOpacity('ndvi',this.value)"/>
+      </div>
+
+      <div style="height:10px"></div>
+      <div class="section-label">Downloads</div>
+      <div class="download-row" id="download-row"></div>
+      <div id="download-warning" class="download-warning"></div>
+    </div>
+  </div>
+
+  <!-- ── Map ───────────────────────────────────────────── -->
+  <div id="map-wrap">
+    <div id="map"></div>
+
+    <div id="map-legend">
+      <div class="legend-title">Confidence</div>
+      <div class="legend-bar"></div>
+      <div class="legend-ticks"><span>0%</span><span>50%</span><span>100%</span></div>
+    </div>
+
+    <div id="scene-info">
+      <div class="si-row">
+        <span class="si-key">Job</span><span class="si-val" id="si-job">—</span>
+        <span class="si-key">Date</span><span class="si-val" id="si-date">—</span>
+        <span class="si-key">Status</span><span class="si-val" id="si-status">—</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────
+const DEFAULT_API = 'http://localhost:8000';
+let API = DEFAULT_API;
+
+const OUTPUT_LABELS = {
+  reconstructed: '🛰️ Recon',
+  cloud_mask:    '☁️ Mask',
+  confidence:    '📊 Confidence',
+  uncertainty:   '🔍 Uncertainty',
+  report_json:   '📋 JSON',
+  report_pdf:    '📄 PDF',
+  ndvi:          '🌿 NDVI',
+  ndwi:          '💧 NDWI',
+  savi:          '🌱 SAVI',
+  ndbi:          '🏙️ NDBI',
+  branch_weights:'🧠 Branch weights',
+  mc_uncertainty:'⚠️ MC uncertainty',
+};
+
+const state = {
+  files: { optical: null, sar: null, temporal: null },
+  jobId: null,
+  pollInterval: null,
+  map: null,
+};
+
+const STAGES = [
+  { id:0, keys:['queued'],       pct:5  },
+  { id:1, keys:['loading'],      pct:20 },
+  { id:2, keys:['detection'],    pct:35 },
+  { id:3, keys:['temporal'],     pct:50 },
+  { id:4, keys:['reconstruction'],pct:65},
+  { id:5, keys:['verif'],        pct:80 },
+  { id:6, keys:['confidence'],   pct:90 },
+  { id:7, keys:['export','complete'], pct:100 },
+];
+
+// ── Map init ───────────────────────────────────────────────────
+function initMap() {
+  // Use a free public style; replace token with your Mapbox token
+  mapboxgl.accessToken = 'pk.eyJ1IjoiY2xvdWRjbGVhciIsImEiOiJjbGNsb3VkY2xlYXIifQ.placeholder';
+
+  state.map = new mapboxgl.Map({
+    container: 'map',
+    style:     'mapbox://styles/mapbox/dark-v11',
+    center:    [77.4, 23.3],
+    zoom:      7,
+    projection:'mercator',
+  });
+
+  state.map.on('mousemove', e => {
+    const { lng, lat } = e.lngLat;
+    document.getElementById('coords-display').textContent =
+      `${lat.toFixed(4)}°N  ${lng.toFixed(4)}°E`;
+  });
+
+  state.map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+  state.map.addControl(new mapboxgl.ScaleControl(), 'bottom-right');
+
+  // Draw AOI on map when bbox changes
+  document.getElementById('bbox-input').addEventListener('change', drawAOI);
+  drawAOI();
+}
+
+function drawAOI() {
+  const bbox = parseBbox();
+  if (!bbox || !state.map) return;
+  const [w, s, e, n] = bbox;
+  const geojson = {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[[w,s],[e,s],[e,n],[w,n],[w,s]]]
+    }
+  };
+  if (state.map.getSource('aoi')) {
+    state.map.getSource('aoi').setData(geojson);
+  } else {
+    state.map.on('load', () => {
+      state.map.addSource('aoi', { type:'geojson', data:geojson });
+      state.map.addLayer({
+        id:'aoi-fill', type:'fill', source:'aoi',
+        paint:{ 'fill-color':'#00D97E','fill-opacity':0.06 }
+      });
+      state.map.addLayer({
+        id:'aoi-border', type:'line', source:'aoi',
+        paint:{ 'line-color':'#00D97E','line-width':1.5,'line-dasharray':[4,2] }
+      });
+    });
+  }
+  // Fly to AOI
+  state.map.fitBounds([[w,s],[e,n]], { padding:60, duration:1000 });
+}
+
+// ── File handling ──────────────────────────────────────────────
+function handleFile(event, type) {
+  const file = event.target.files[0];
+  if (!file) return;
+  state.files[type] = file;
+  document.getElementById(`fn-${type}`).textContent = file.name;
+  const dot = document.getElementById(`fs-${type}`);
+  dot.className = 'fs-status ok';
+  if (type === 'optical') {
+    document.getElementById('run-btn').disabled = false;
+    toast(`Loaded: ${file.name}`, 'ok');
+  }
+}
+
+function handleDrop(event) {
+  event.preventDefault();
+  document.getElementById('upload-zone').classList.remove('drag');
+  const file = event.dataTransfer.files[0];
+  if (file && (file.name.endsWith('.tif') || file.name.endsWith('.tiff'))) {
+    state.files.optical = file;
+    document.getElementById('fn-optical').textContent = file.name;
+    document.getElementById('fs-optical').className = 'fs-status ok';
+    document.getElementById('run-btn').disabled = false;
+    toast(`Loaded: ${file.name}`, 'ok');
+  }
+}
+
+// ── Pipeline ───────────────────────────────────────────────────
+async function runPipeline() {
+  if (!state.files.optical) { toast('Select an optical GeoTIFF first', 'err'); return; }
+
+  const inputHost = document.getElementById('api-host-input').value;
+  const normalizedHost = normalizeApiHost(inputHost);
+  API = normalizedHost;
+  document.getElementById('api-host-input').value = API;
+
+  const ok = await setApiHostStatus(API);
+  if (!ok) {
+    const msg = `Cannot run pipeline: API host ${API} is unreachable.`;
+    setErrorBanner(msg);
+    toast(msg, 'err');
+    return;
+  }
+
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('progress-section').classList.add('visible');
+  document.getElementById('results-section').style.display = 'none';
+  setProgress(0, -1);
+
+  const form = new FormData();
+  form.append('optical', state.files.optical);
+  if (state.files.sar)      form.append('sar',      state.files.sar);
+  if (state.files.temporal) form.append('temporal',  state.files.temporal);
+
+  try {
+    const res  = await fetch(`${API}/infer`, { method:'POST', body:form, mode:'cors' });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`API returned ${res.status}: ${errText}`);
+    }
+    const job  = await res.json();
+    state.jobId = job.job_id;
+
+    document.getElementById('si-job').textContent    = job.job_id;
+    document.getElementById('si-date').textContent   = document.getElementById('date-input').value;
+    document.getElementById('si-status').textContent = 'PROCESSING';
+    document.getElementById('scene-info').classList.add('visible');
+    setDownloadWarning('');
+
+    toast(`Job ${job.job_id} submitted`, 'ok');
+    state.pollInterval = setInterval(pollStatus, 1800);
+  } catch(e) {
+    const message = `API request failed: ${e.message}`;
+    setDownloadWarning(message);
+    setErrorBanner(message);
+    toast(message, 'err');
+    document.getElementById('run-btn').disabled = false;
+  }
+}
+
+async function pollStatus() {
+  try {
+    const res = await fetch(`${API}/status/${state.jobId}`);
+    const job = await res.json();
+    updateProgress(job);
+    if (job.status === 'complete' || job.status === 'failed') {
+      clearInterval(state.pollInterval);
+      if (job.status === 'complete') {
+        document.getElementById('si-status').textContent = '✓ COMPLETE';
+        setDownloadWarning('');
+        showResults(job);
+      } else {
+        document.getElementById('si-status').textContent = '✗ FAILED';
+        const failureMessage = `Pipeline failed: ${job.error || 'unknown'}`;
+        setDownloadWarning(failureMessage);
+        setErrorBanner(failureMessage);
+        document.getElementById('results-section').style.display = 'block';
+        document.getElementById('scene-info').classList.add('visible');
+        toast(failureMessage, 'err');
+        document.getElementById('run-btn').disabled = false;
+      }
+    }
+  } catch(e) { /* ignore transient errors */ }
+}
+
+function updateProgress(job) {
+  const pct   = job.progress || 0;
+  const stage = (job.stage || '').toLowerCase();
+  setProgress(pct, getStageIndex(stage));
+}
+
+function getStageIndex(stage) {
+  if (stage.includes('load'))   return 0;
+  if (stage.includes('detect')) return 1;
+  if (stage.includes('temp'))   return 2;
+  if (stage.includes('recon'))  return 3;
+  if (stage.includes('verif'))  return 4;
+  if (stage.includes('conf'))   return 5;
+  if (stage.includes('export') || stage.includes('complete')) return 6;
+  return -1;
+}
+
+function setProgress(pct, activeStage) {
+  document.getElementById('progress-fill').style.width = pct + '%';
+  for (let i = 0; i <= 6; i++) {
+    const dot  = document.getElementById(`sd-${i}`);
+    const name = document.getElementById(`sn-${i}`);
+    dot.className  = 'stage-dot ' + (i < activeStage ? 'done' : i === activeStage ? 'active' : '');
+    name.className = 'stage-name ' + (i < activeStage ? 'done' : i === activeStage ? 'active' : '');
+  }
+}
+
+function setDownloadWarning(message = '') {
+  const warningEl = document.getElementById('download-warning');
+  warningEl.textContent = message;
+  warningEl.style.display = message ? 'block' : 'none';
+}
+
+// ── Results display ────────────────────────────────────────────
+function showResults(job) {
+  document.getElementById('results-section').style.display = 'block';
+  document.getElementById('map-legend').classList.add('visible');
+  document.getElementById('run-btn').disabled = false;
+
+  const val = job.validation || {};
+  const passes = val.passes || [];
+  const overall = val.overall_pass;
+  const confidenceVal = val.confidence ?? val.metrics?.confidence ?? 0;
+  const conf = Math.round(confidenceVal * 100);
+
+  document.getElementById('overall-badge').innerHTML =
+    `<span class="pass-badge ${overall ? 'pass' : 'fail'}">
+      ${overall ? '✓ VALIDATION PASS' : '✗ VALIDATION FAIL'}
+    </span>`;
+
+  const getMetric = (key, fallback = 0) => {
+    const value = val.metrics?.[key] ?? val[key] ?? fallback;
+    return typeof value === 'number' ? value : parseFloat(value) || fallback;
+  };
+
+  const metrics = [
+    { k:'ssim', v:getMetric('ssim'), label:'SSIM',        good:v=>v>=0.9,  format:v=>v.toFixed(3) },
+    { k:'psnr', v:getMetric('psnr'), label:'PSNR (dB)',   good:v=>v>=35,   format:v=>v.toFixed(1) },
+    { k:'rmse', v:getMetric('rmse'), label:'RMSE',        good:v=>v<=0.03, format:v=>v.toFixed(3) },
+    { k:'sam',  v:getMetric('sam'),  label:'SAM (rad)',   good:v=>v<=0.10, format:v=>v.toFixed(3) },
+    { k:'ndvi', v:getMetric('ndvi_error'), label:'NDVI Error', good:v=>v<=5, format:v=>`${(v*100).toFixed(1)}%` },
+    { k:'conf', v:confidenceVal, label:'Confidence',  good:v=>v*100>=70, format:v=>`${Math.round(v*100)}%` },
+  ];
+
+  document.getElementById('pass-summary').innerHTML = passes.length
+    ? passes.map(p => `
+        <span class="pass-badge ${p.passed ? 'pass' : 'fail'}">
+          ${p.name}: ${p.passed ? 'PASS' : 'FAIL'}
+        </span>
+      `).join('')
+    : '';
+
+  document.getElementById('metric-grid').innerHTML = metrics.map(m => {
+    const value = m.v;
+    const formatted = m.format ? m.format(value) : value;
+    const passed = m.good(value);
+    const cls = passed ? '' : value > 0 ? 'warn' : 'fail';
+    return `<div class="metric-card">
+      <div class="metric-value ${cls}">${formatted}</div>
+      <div class="metric-label">${m.label}</div>
+    </div>`;
+  }).join('');
+
+  // Download buttons
+  const outs = job.outputs || {};
+  const outputKeys = Object.keys(outs).sort();
+  const downloadRow = document.getElementById('download-row');
+  const warningEl = document.getElementById('download-warning');
+
+  if (outputKeys.length > 0) {
+    downloadRow.innerHTML = outputKeys.map(key => {
+      const label = OUTPUT_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      return `<a class="dl-btn" href="${API}/result/${job.job_id}?output=${encodeURIComponent(key)}"
+                target="_blank">${label}</a>`;
+    }).join('');
+    warningEl.textContent = '';
+    warningEl.style.display = 'none';
+  } else {
+    downloadRow.innerHTML = '';
+    setDownloadWarning('No downloadable outputs were generated for this job. Please verify the backend pipeline, or check the job status and logs.');
+  }
+
+  toast('Pipeline complete — results loaded', 'ok');
+  addDemoLayers();
+}
+
+// ── Demo mode (no API) ─────────────────────────────────────────
+function runDemo() {
+  let pct = 0;
+  const iv = setInterval(() => {
+    pct += 4;
+    setProgress(Math.min(pct, 100), Math.floor(pct / 15));
+    if (pct >= 100) {
+      clearInterval(iv);
+      showResults({
+        job_id: 'demo-001',
+        status: 'complete',
+        outputs: {},
+        validation: {
+          overall_pass: true,
+          confidence: 0.83,
+          metrics: { ssim:0.937, psnr:38.1, rmse:0.016, sam:0.068 },
+          ndvi_error: 0.022,
+          passes: [
+            {id:1,name:'Temporal',passed:true, score:0.91},
+            {id:2,name:'SAR',     passed:true, score:0.78},
+            {id:3,name:'Spectral',passed:true, score:0.96},
+            {id:4,name:'AI Check',passed:true, score:0.89},
+            {id:5,name:'Reference',passed:true,score:0.85},
+          ]
+        }
+      });
+    }
+  }, 180);
+}
+
+// ── Map layers (demo coloured overlays) ───────────────────────
+function addDemoLayers() {
+  if (!state.map || !state.map.isStyleLoaded()) return;
+  const bbox = parseBbox() || [77.2,23.1,77.6,23.5];
+  const [w,s,e,n] = bbox;
+
+  // Simulated confidence gradient layer
+  const confGeo = {
+    type:'Feature',
+    geometry:{ type:'Polygon', coordinates:[[[w,s],[e,s],[e,n],[w,n],[w,s]]] }
+  };
+  if (!state.map.getSource('conf-layer')) {
+    state.map.addSource('conf-layer', {type:'geojson', data:confGeo});
+    state.map.addLayer({
+      id:'conf-fill', type:'fill', source:'conf-layer',
+      paint:{ 'fill-color':'#00D97E', 'fill-opacity':0.25 }
+    });
+  }
+}
+
+function toggleLayer(id, on) {
+  if (!state.map) return;
+  const layerId = id === 'conf' ? 'conf-fill' : id === 'cloud' ? 'aoi-fill' : null;
+  if (layerId && state.map.getLayer(layerId))
+    state.map.setLayoutProperty(layerId, 'visibility', on ? 'visible' : 'none');
+}
+
+function setLayerOpacity(id, val) {
+  if (!state.map) return;
+  const layerId = id === 'conf' ? 'conf-fill' : id === 'cloud' ? 'aoi-fill' : null;
+  if (layerId && state.map.getLayer(layerId))
+    state.map.setPaintProperty(layerId, 'fill-opacity', val / 100 * 0.5);
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+function parseBbox() {
+  const v = document.getElementById('bbox-input').value;
+  const p = v.split(',').map(Number);
+  return p.length === 4 && p.every(n => !isNaN(n)) ? p : null;
+}
+
+function setPreset(bbox) {
+  document.getElementById('bbox-input').value = bbox;
+  drawAOI();
+}
+
+function toast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = `show ${type}`;
+  setTimeout(() => el.className = '', 3000);
+}
+
+// ── Boot ───────────────────────────────────────────────────────
+window.addEventListener('load', async () => {
+  initMap();
+  document.getElementById('api-host-input').value = DEFAULT_API;
+  const apiOrigin = await resolveApiOrigin();
+  API = apiOrigin;
+  document.getElementById('api-host-input').value = API;
+  await setApiHostStatus(API);
+});
+
+async function resolveApiOrigin() {
+  if (!window.location.protocol.startsWith('http')) {
+    return DEFAULT_API;
+  }
+
+  const tryEndpoint = async base => {
+    try {
+      const res = await fetch(`${base}/health`, { method:'GET' });
+      if (res.ok) {
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  };
+
+  const currentOrigin = window.location.origin;
+  if (await tryEndpoint(currentOrigin)) {
+    return currentOrigin;
+  }
+  if (await tryEndpoint(DEFAULT_API)) {
+    return DEFAULT_API;
+  }
+  return DEFAULT_API;
+}
+
+function setErrorBanner(message = '') {
+  const banner = document.getElementById('error-banner');
+  if (!banner) return;
+  banner.textContent = message;
+  banner.className = message ? 'error-banner show' : 'error-banner';
+}
+
+function normalizeApiHost(host) {
+  if (!host) {
+    return DEFAULT_API;
+  }
+
+  host = host.trim();
+  if (!host) {
+    return DEFAULT_API;
+  }
+
+  if (host.endsWith('/')) {
+    host = host.slice(0, -1);
+  }
+
+  if (!/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(host)) {
+    host = `http://${host}`;
+  }
+
+  try {
+    const url = new URL(host);
+    if (!url.hostname) {
+      return DEFAULT_API;
+    }
+    return url.origin;
+  } catch (err) {
+    return DEFAULT_API;
+  }
+}
+
+async function setApiHostStatus(host) {
+  const label = document.getElementById('status-label');
+  const dot   = document.getElementById('status-dot');
+  const info  = document.getElementById('api-check-status');
+
+  API = host;
+  const normalizedHost = normalizeApiHost(host);
+  API = normalizedHost;
+  document.getElementById('api-host-input').value = API;
+  try {
+    const res = await fetch(`${API}/health`, { method: 'GET' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    label.textContent = `API @ ${API}`;
+    dot.style.background = '#10B981';
+    info.textContent = `Backend reachable — GPU:${data.gpu_available ? 'yes' : 'no'}`;
+    setErrorBanner('');
+    return true;
+  } catch (err) {
+    label.textContent = `API @ ${API} (unreachable)`;
+    dot.style.background = '#F59E0B';
+    info.textContent = `Failed to reach API: ${err.message}`;
+    setErrorBanner(`Failed to reach API host: ${err.message}`);
+    return false;
+  }
+}
+
+function testApiHost() {
+  const host = document.getElementById('api-host-input').value.trim();
+  if (!host) return;
+  setApiHostStatus(host);
+}
+
+function useCurrentOrigin() {
+  if (!window.location.protocol.startsWith('http')) {
+    const msg = 'Cannot use current origin from local file:// pages. Please enter the backend host manually.';
+    setErrorBanner(msg);
+    toast(msg, 'err');
+    return;
+  }
+
+  const origin = normalizeApiHost(window.location.origin);
+  document.getElementById('api-host-input').value = origin;
+  setApiHostStatus(origin);
+}
+</script>
+</body>
+</html>

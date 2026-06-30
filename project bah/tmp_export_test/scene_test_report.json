@@ -1,0 +1,16 @@
+{
+  "scene": "scene_test",
+  "outputs": {
+    "reconstructed": "tmp_export_test\\scene_test_reconstructed.tif",
+    "cloud_mask": "tmp_export_test\\scene_test_cloud_mask.tif",
+    "confidence": "tmp_export_test\\scene_test_confidence.tif",
+    "uncertainty": "tmp_export_test\\scene_test_uncertainty.tif",
+    "ndvi": "tmp_export_test\\scene_test_ndvi.tif",
+    "ndwi": "tmp_export_test\\scene_test_ndwi.tif",
+    "savi": "tmp_export_test\\scene_test_savi.tif",
+    "ndbi": "tmp_export_test\\scene_test_ndbi.tif"
+  },
+  "confidence_breakdown": {},
+  "overall_pass": true,
+  "passes": []
+}

@@ -1,0 +1,77 @@
+{
+  "scene": "test_scene_no_sar",
+  "outputs": {
+    "reconstructed": "outputs\\predictions\\test_export_no_sar\\test_scene_no_sar_reconstructed.tif",
+    "cloud_mask": "outputs\\predictions\\test_export_no_sar\\test_scene_no_sar_cloud_mask.tif",
+    "confidence": "outputs\\predictions\\test_export_no_sar\\test_scene_no_sar_confidence.tif",
+    "uncertainty": "outputs\\predictions\\test_export_no_sar\\test_scene_no_sar_uncertainty.tif",
+    "ndvi": "outputs\\predictions\\test_export_no_sar\\test_scene_no_sar_ndvi.tif",
+    "ndwi": "outputs\\predictions\\test_export_no_sar\\test_scene_no_sar_ndwi.tif",
+    "savi": "outputs\\predictions\\test_export_no_sar\\test_scene_no_sar_savi.tif",
+    "ndbi": "outputs\\predictions\\test_export_no_sar\\test_scene_no_sar_ndbi.tif"
+  },
+  "confidence_breakdown": {
+    "temporal": 0.6999998688697815,
+    "spectral": 1.0,
+    "sar": 1.0,
+    "artifact": 0.4452638626098633,
+    "boundary": 0.0
+  },
+  "overall_pass": false,
+  "confidence": 0.8890527725219727,
+  "passes": [
+    {
+      "id": 1,
+      "name": "Temporal Validation",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.8,
+      "details": {
+        "note": "No temporal data \u2014 pass skipped"
+      }
+    },
+    {
+      "id": 2,
+      "name": "SAR Consistency",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.7,
+      "details": {
+        "note": "No SAR data \u2014 pass skipped"
+      }
+    },
+    {
+      "id": 3,
+      "name": "Spectral Validation",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.95,
+      "details": {
+        "out_of_range_fraction": 0.0
+      }
+    },
+    {
+      "id": 4,
+      "name": "AI Self-Checker",
+      "passed": false,
+      "score": 0.4452638626098633,
+      "threshold": 0.85,
+      "details": {
+        "artifact_probability": 0.5547361373901367
+      }
+    },
+    {
+      "id": 5,
+      "name": "Reference Matching",
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.7,
+      "details": {
+        "note": "No reference data \u2014 pass skipped"
+      }
+    }
+  ],
+  "ssim": 1.0,
+  "psnr": Infinity,
+  "sam": 0.0
+}
