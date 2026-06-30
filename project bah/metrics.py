@@ -82,6 +82,9 @@ def spectral_angle_mapper(pred: torch.Tensor, target: torch.Tensor) -> float:
     if pred.dim() == 3:
         pred, target = pred.unsqueeze(0), target.unsqueeze(0)
 
+    if torch.allclose(pred, target, atol=1e-5):
+        return 0.0
+
     # (B, C, H*W)
     p = pred.flatten(2)
     t = target.flatten(2)
@@ -89,7 +92,7 @@ def spectral_angle_mapper(pred: torch.Tensor, target: torch.Tensor) -> float:
     dot     = (p * t).sum(dim=1)
     norm_p  = p.norm(dim=1).clamp(min=1e-8)
     norm_t  = t.norm(dim=1).clamp(min=1e-8)
-    cosine  = (dot / (norm_p * norm_t)).clamp(-1 + 1e-7, 1 - 1e-7)
+    cosine  = (dot / (norm_p * norm_t)).clamp(-1.0, 1.0)
     return torch.acos(cosine).mean().item()
 
 
@@ -108,18 +111,54 @@ def temporal_consistency(
 
     Args:
         pred:           Reconstructed image  (B, C, H, W)
-        temporal_stack: Stack of ±15-day scenes  (B, T, C, H, W)
-        cloud_mask:     Optional clear-sky mask for reference pixels  (B, H, W)
+        temporal_stack: Stack of ±15-day scenes (B, T, C, H, W) or (C, T, H, W) or (B, C, H, W) or (C, H, W)
+        cloud_mask:     Optional clear-sky mask for reference pixels  (B, H, W) or (B, 1, H, W)
 
     Returns:
         Score in [0, 1]. Higher is better. Target > 0.85.
     """
-    B, T, C, H, W = temporal_stack.shape
+    # Force pred to be 4D (B, C, H, W)
+    if pred.dim() == 3:
+        pred = pred.unsqueeze(0)
+    B, C, H, W = pred.shape
+
+    # If temporal_stack is 3D (C, H, W), turn it into (B, 1, C, H, W)
+    if temporal_stack.dim() == 3:
+        temporal_stack = temporal_stack.unsqueeze(0).unsqueeze(1).expand(B, 1, -1, -1, -1)
+    
+    # If temporal_stack is 4D, check for shape variations
+    elif temporal_stack.dim() == 4:
+        if temporal_stack.shape[1] == 1 and temporal_stack.shape[0] == C:
+            # (C, 1, H, W) from composite.unsqueeze(1) where composite was (C, H, W)
+            t_s = temporal_stack.squeeze(1) # (C, H, W)
+            temporal_stack = t_s.unsqueeze(0).unsqueeze(1).expand(B, 1, -1, -1, -1)
+        elif temporal_stack.shape[0] == B and temporal_stack.shape[1] == C:
+            # (B, C, H, W), so make it (B, 1, C, H, W)
+            temporal_stack = temporal_stack.unsqueeze(1)
+        else:
+            # Assume it is (T, C, H, W), so make it (B, T, C, H, W)
+            temporal_stack = temporal_stack.unsqueeze(0).expand(B, -1, -1, -1, -1)
+
+    # Now temporal_stack must be 5D (B, T, C, H, W)
+    if temporal_stack.dim() == 5:
+        if temporal_stack.shape[0] != B:
+            temporal_stack = temporal_stack.expand(B, -1, -1, -1, -1)
+    else:
+        raise ValueError(f"Unsupported temporal_stack shape: {temporal_stack.shape}")
+
+    B_t, T, C_t, H_t, W_t = temporal_stack.shape
     temporal_median = temporal_stack.median(dim=1).values  # (B, C, H, W)
 
     if cloud_mask is not None:
-        mask = cloud_mask.unsqueeze(1).float()  # (B, 1, H, W)
-        diff = ((pred - temporal_median).abs() * mask).sum() / (mask.sum() * C + 1e-8)
+        # Ensure cloud_mask is 4D (B, 1, H, W)
+        if cloud_mask.dim() == 2:
+            cloud_mask = cloud_mask.unsqueeze(0)
+        if cloud_mask.dim() == 3:
+            cloud_mask = cloud_mask.unsqueeze(1)
+        if cloud_mask.shape[0] != B:
+            cloud_mask = cloud_mask.expand(B, -1, -1, -1)
+        
+        diff = ((pred - temporal_median).abs() * cloud_mask.float()).sum() / (cloud_mask.sum() * C + 1e-8)
     else:
         diff = (pred - temporal_median).abs().mean()
 

@@ -28,7 +28,10 @@ import torch
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+_FRONTEND_DIR = Path(__file__).parent
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +79,12 @@ _output_base = Path("outputs/predictions")
 # ─────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Serve the frontend index.html."""
+    return FileResponse(_FRONTEND_DIR / "index.html", media_type="text/html")
+
 
 @app.get("/health")
 async def health():

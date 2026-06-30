@@ -4,8 +4,8 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>CloudClear — Scientific Cloud Removal</title>
-<link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet"/>
-<script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@4.3.0/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@4.3.0/dist/maplibre-gl.js"></script>
 <style>
 /* ── Design tokens ─────────────────────────────────────────────
    Palette: deep space navy + signal green + cloud white + amber alert
@@ -513,14 +513,11 @@ const STAGES = [
 // ── Map init ───────────────────────────────────────────────────
 function initMap() {
   // Use a free public style; replace token with your Mapbox token
-  mapboxgl.accessToken = 'pk.eyJ1IjoiY2xvdWRjbGVhciIsImEiOiJjbGNsb3VkY2xlYXIifQ.placeholder';
-
-  state.map = new mapboxgl.Map({
+  state.map = new maplibregl.Map({
     container: 'map',
-    style:     'mapbox://styles/mapbox/dark-v11',
+    style:     'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
     center:    [77.4, 23.3],
     zoom:      7,
-    projection:'mercator',
   });
 
   state.map.on('mousemove', e => {
@@ -529,8 +526,8 @@ function initMap() {
       `${lat.toFixed(4)}°N  ${lng.toFixed(4)}°E`;
   });
 
-  state.map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
-  state.map.addControl(new mapboxgl.ScaleControl(), 'bottom-right');
+  state.map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+  state.map.addControl(new maplibregl.ScaleControl(), 'bottom-right');
 
   // Draw AOI on map when bbox changes
   document.getElementById('bbox-input').addEventListener('change', drawAOI);

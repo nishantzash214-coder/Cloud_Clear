@@ -115,12 +115,20 @@ class TemporalAnalyzer:
         if self.composite_method == "median":
             # nanmedian not in older torch — use numpy fallback
             np_stack = stack.numpy()                  # (T, C, H, W)
-            composite = np.nanmedian(np_stack, axis=0)  # (C, H, W)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                composite = np.nanmedian(np_stack, axis=0)  # (C, H, W)
+            composite = np.nan_to_num(composite, nan=0.0)
             return torch.from_numpy(composite.astype(np.float32))
 
         elif self.composite_method == "mean":
             np_stack = stack.numpy()
-            composite = np.nanmean(np_stack, axis=0)
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                composite = np.nanmean(np_stack, axis=0)
+            composite = np.nan_to_num(composite, nan=0.0)
             return torch.from_numpy(composite.astype(np.float32))
 
         elif self.composite_method == "mosaic":
@@ -135,7 +143,11 @@ class TemporalAnalyzer:
             np_stack  = stack.numpy()
             np_comp   = composite.numpy()
             still_nan = np.isnan(np_comp[0])
-            np_comp[:, still_nan] = np.nanmedian(np_stack, axis=0)[:, still_nan]
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                np_comp[:, still_nan] = np.nanmedian(np_stack, axis=0)[:, still_nan]
+            np_comp = np.nan_to_num(np_comp, nan=0.0)
             return torch.from_numpy(np_comp.astype(np.float32))
 
         else:
@@ -235,12 +247,18 @@ class TemporalAnalyzer:
 
         # Feature 1: |NDVI trend slope|  (large = changing)
         trend_score = ndvi_trend.abs().numpy()
+        trend_score = np.nan_to_num(trend_score, nan=0.0)
         trend_score = np.clip(trend_score / (threshold * 2), 0, 1)
 
         # Feature 2: IQR of NIR band  (high = volatile pixel)
         nir = np_stack[:, 2, :, :]          # (T, H, W)
-        q75 = np.nanpercentile(nir, 75, axis=0)
-        q25 = np.nanpercentile(nir, 25, axis=0)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            q75 = np.nanpercentile(nir, 75, axis=0)
+            q25 = np.nanpercentile(nir, 25, axis=0)
+        q75 = np.nan_to_num(q75, nan=0.0)
+        q25 = np.nan_to_num(q25, nan=0.0)
         iqr_score = np.clip((q75 - q25) / 0.3, 0, 1)
 
         # Feature 3: max single-step NDVI delta
@@ -251,7 +269,10 @@ class TemporalAnalyzer:
         if ndvi_maps.ndim == 4 and ndvi_maps.shape[1] == 1:
             ndvi_maps = ndvi_maps.squeeze(1)
         deltas     = np.abs(np.diff(ndvi_maps, axis=0))
-        max_delta  = np.nanmax(deltas, axis=0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            max_delta  = np.nanmax(deltas, axis=0)
+        max_delta  = np.nan_to_num(max_delta, nan=0.0)
         delta_score = np.clip(max_delta / threshold, 0, 1)
 
         # Combine: weighted sum
@@ -296,7 +317,11 @@ class TemporalAnalyzer:
         if not deviations:
             return torch.ones(stack.shape[2], stack.shape[3])
 
-        mean_mad = np.mean(deviations, axis=0)           # (H,W)
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            mean_mad = np.nanmean(deviations, axis=0)           # (H,W)
+        mean_mad = np.nan_to_num(mean_mad, nan=1.0)         # fill NaN with 1.0
 
         # 2. Fraction of time steps with clear observations
         clear_fraction = (np_masks == 0).mean(axis=0)   # (H,W) in [0,1]
